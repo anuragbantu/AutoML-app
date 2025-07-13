@@ -9,6 +9,8 @@ import plotly.graph_objs as go
 from flaml import AutoML
 from sklearn.linear_model import LinearRegression
 from sklearn.ensemble import RandomForestRegressor
+from xgboost import XGBRegressor
+from sklearn.linear_model import LogisticRegression
 
 st.title("ML Modeling App")
 
@@ -75,9 +77,9 @@ if data is not None:
                     X[col] = le.fit_transform(X[col])
 
         # 3. Model selection
-        problem_type = st.radio("Problem type", ("Regression",))
-        test_size = st.slider("Test size (fraction)", 0.1, 0.5, 0.2)
-        random_state = st.number_input("Random state", value=42)
+        problem_type = "Regression"
+        test_size = 0.2
+        random_state = 42
 
         # User selects modeling approach
         st.markdown("**Modeling Approach**")
@@ -87,7 +89,7 @@ if data is not None:
         )
 
         if modeling_option == "Standard Regression Models":
-            model_name = st.selectbox("Select regression model", ("Linear Regression", "Random Forest Regressor"))
+            model_name = st.selectbox("Select regression model", ("Linear Regression", "Random Forest Regressor", "Logistic Regression", "XGBoost Regressor"))
 
         if st.button("Run Model"):
             # 80/20 split, no random state
@@ -95,8 +97,12 @@ if data is not None:
             if modeling_option == "Standard Regression Models":
                 if model_name == "Linear Regression":
                     reg_model = LinearRegression()
-                else:
+                elif model_name == "Random Forest Regressor":
                     reg_model = RandomForestRegressor()
+                elif model_name == "Logistic Regression":
+                    reg_model = LogisticRegression(max_iter=1000)
+                else:
+                    reg_model = XGBRegressor(verbosity=0)
                 reg_model.fit(X_train, y_train)
                 y_pred = reg_model.predict(X_test)
                 best_model = reg_model
@@ -133,20 +139,40 @@ if data is not None:
             # Feature importance
             st.subheader("Feature Importance")
             feature_names = X.columns if hasattr(X, 'columns') else features
+            importances = None
             if hasattr(best_model, "feature_importances_"):
                 importances = best_model.feature_importances_
+            elif hasattr(best_model, "coef_"):
+                coefs = best_model.coef_
+                importances = coefs if coefs.ndim == 1 else coefs[0]
+            if importances is not None:
                 imp_df = pd.DataFrame({"Feature": feature_names, "Importance": importances})
                 imp_df = imp_df.sort_values("Importance", ascending=False)
                 st.bar_chart(imp_df.set_index("Feature"))
-            elif hasattr(best_model, "coef_"):
-                coefs = best_model.coef_
-                if coefs.ndim == 1:
-                    imp_df = pd.DataFrame({"Feature": feature_names, "Coefficient": coefs})
-                else:
-                    imp_df = pd.DataFrame(coefs, columns=feature_names)
-                st.write(imp_df)
             else:
                 st.write("Feature importance not available for this model.")
 
-            st.subheader("Best Model Found")
-            st.write(best_model)
+            if modeling_option == "AutoML (FLAML)":
+                st.subheader("Best Model Found")
+                st.write(type(best_model).__name__)
+                st.json(automl.best_config)
+
+            if modeling_option == "AutoML (FLAML)":
+                st.subheader("Top 5 FLAML Trials (by validation loss)")
+
+                try:
+                    # Safely access internal training history
+                    history_list = getattr(automl._state, "history", [])
+                    if history_list:
+                        history_df = pd.DataFrame(history_list)
+                        if 'metric_target' in history_df.columns:
+                            top5_df = history_df.sort_values('metric_target').head(5)
+                            top5_df = top5_df[['learner', 'metric_target', 'train_time']]
+                            top5_df.columns = ['Model', 'Validation Loss', 'Train Time (s)']
+                            st.dataframe(top5_df.reset_index(drop=True))
+                        else:
+                            st.warning("Column 'metric_target' not found in training history.")
+                    else:
+                        st.warning("FLAML training history is empty.")
+                except Exception as e:
+                    st.error(f"Error loading FLAML training history: {e}")
