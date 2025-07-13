@@ -1,0 +1,152 @@
+import streamlit as st
+import pandas as pd
+import numpy as np
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score, accuracy_score, classification_report
+import matplotlib.pyplot as plt
+import seaborn as sns
+import plotly.graph_objs as go
+from flaml import AutoML
+from sklearn.linear_model import LinearRegression
+from sklearn.ensemble import RandomForestRegressor
+
+st.title("ML Modeling App")
+
+# 1. Upload CSV
+data = None
+uploaded_file = st.file_uploader("Upload your CSV file", type=["csv"])
+if uploaded_file:
+    data = pd.read_csv(uploaded_file)
+    st.write("Data Preview:", data.head())
+
+if data is not None:
+    # 2. Select features and target
+    columns = data.columns.tolist()
+    target = st.selectbox("Select target variable", columns)
+    features = st.multiselect("Select independent variables", [col for col in columns if col != target])
+
+    # New: Preprocessing option for missing values
+    st.markdown("**Preprocessing: Handle missing values**")
+    missing_option = st.radio(
+        "How do you want to handle missing values?",
+        ("Drop rows with missing values", "Fill missing values (mean/mode)")
+    )
+
+    # Encoding option for categorical variables
+    st.markdown("**Encoding: Handle categorical variables**")
+    encoding_option = st.radio(
+        "How do you want to encode categorical variables?",
+        ("One-hot encoding", "Label encoding")
+    )
+
+    if features and target:
+        X = data[features]
+        y = data[target]
+
+        # Apply missing value handling
+        if missing_option == "Drop rows with missing values":
+            df = pd.concat([X, y], axis=1).dropna()
+            X = df[features]
+            y = df[target]
+        else:
+            df = pd.concat([X, y], axis=1)
+            for col in features:
+                if df[col].dtype in [np.float64, np.float32, np.int64, np.int32]:
+                    df[col] = df[col].fillna(df[col].mean())
+                else:
+                    df[col] = df[col].fillna(df[col].mode()[0])
+            # Target variable
+            if df[target].dtype in [np.float64, np.float32, np.int64, np.int32]:
+                df[target] = df[target].fillna(df[target].mean())
+            else:
+                df[target] = df[target].fillna(df[target].mode()[0])
+            X = df[features]
+            y = df[target]
+
+        # Encode categorical variables
+        cat_cols = X.select_dtypes(include=['object', 'category']).columns.tolist()
+        if cat_cols:
+            if encoding_option == "One-hot encoding":
+                X = pd.get_dummies(X, columns=cat_cols, drop_first=True)
+            else:
+                from sklearn.preprocessing import LabelEncoder
+                le = LabelEncoder()
+                for col in cat_cols:
+                    X[col] = le.fit_transform(X[col])
+
+        # 3. Model selection
+        problem_type = st.radio("Problem type", ("Regression",))
+        test_size = st.slider("Test size (fraction)", 0.1, 0.5, 0.2)
+        random_state = st.number_input("Random state", value=42)
+
+        # User selects modeling approach
+        st.markdown("**Modeling Approach**")
+        modeling_option = st.radio(
+            "How do you want to model?",
+            ("Standard Regression Models", "AutoML (FLAML)")
+        )
+
+        if modeling_option == "Standard Regression Models":
+            model_name = st.selectbox("Select regression model", ("Linear Regression", "Random Forest Regressor"))
+
+        if st.button("Run Model"):
+            # 80/20 split, no random state
+            X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2)
+            if modeling_option == "Standard Regression Models":
+                if model_name == "Linear Regression":
+                    reg_model = LinearRegression()
+                else:
+                    reg_model = RandomForestRegressor()
+                reg_model.fit(X_train, y_train)
+                y_pred = reg_model.predict(X_test)
+                best_model = reg_model
+            else:
+                automl = AutoML()
+                automl_settings = {
+                    "time_budget": 10,  # seconds
+                    "task": "regression",
+                    "log_file_name": "automl_regression.log"
+                }
+                automl.fit(X_train=X_train, y_train=y_train, **automl_settings)
+                y_pred = automl.predict(X_test)
+                best_model = automl.model
+
+            st.subheader("Error Metrics")
+            st.write(f"RMSE: {np.sqrt(mean_squared_error(y_test, y_pred)):.4f}")
+            st.write(f"MAE: {mean_absolute_error(y_test, y_pred):.4f}")
+            st.write(f"R²: {r2_score(y_test, y_pred):.4f}")
+
+            st.subheader("Replication Plot")
+            min_val = min(y_test.min(), y_pred.min())
+            max_val = max(y_test.max(), y_pred.max())
+            scatter = go.Scatter(x=y_test, y=y_pred, mode='markers', name='Predicted vs Actual')
+            ideal = go.Scatter(x=[min_val, max_val], y=[min_val, max_val], mode='lines', name='Ideal (45° line)', line=dict(color='red', dash='dash'))
+            layout = go.Layout(
+                xaxis=dict(title='Actual'),
+                yaxis=dict(title='Predicted'),
+                title='Actual vs. Predicted',
+                showlegend=True
+            )
+            fig = go.Figure(data=[scatter, ideal], layout=layout)
+            st.plotly_chart(fig, use_container_width=True)
+
+            # Feature importance
+            st.subheader("Feature Importance")
+            feature_names = X.columns if hasattr(X, 'columns') else features
+            if hasattr(best_model, "feature_importances_"):
+                importances = best_model.feature_importances_
+                imp_df = pd.DataFrame({"Feature": feature_names, "Importance": importances})
+                imp_df = imp_df.sort_values("Importance", ascending=False)
+                st.bar_chart(imp_df.set_index("Feature"))
+            elif hasattr(best_model, "coef_"):
+                coefs = best_model.coef_
+                if coefs.ndim == 1:
+                    imp_df = pd.DataFrame({"Feature": feature_names, "Coefficient": coefs})
+                else:
+                    imp_df = pd.DataFrame(coefs, columns=feature_names)
+                st.write(imp_df)
+            else:
+                st.write("Feature importance not available for this model.")
+
+            st.subheader("Best Model Found")
+            st.write(best_model)
