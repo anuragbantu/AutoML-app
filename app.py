@@ -175,9 +175,15 @@ if data is not None:
                     if shap_values.ndim == 3:
                         shap_values = shap_values[0]
                 if shap_values.shape[1] == X_test.shape[1]:
-                    # Matplotlib beeswarm/violin plot
+                    # Matplotlib beeswarm/violin plot with numpy array and explicit feature names
+                    feature_names = list(X_test.columns) if hasattr(X_test, 'columns') else [f'Feature {i}' for i in range(X_test.shape[1])]
+                    X_plot = X_test.values if hasattr(X_test, 'values') else np.array(X_test)
                     fig, ax = plt.subplots(figsize=(8, min(0.5 * X_test.shape[1], 12)))
-                    shap.summary_plot(shap_values, X_test, plot_type="violin", show=False, color_bar=True)
+                    try:
+                        shap.summary_plot(shap_values, X_plot, feature_names=feature_names, plot_type="violin", show=False, color_bar=True)
+                    except Exception as e_violin:
+                        st.warning(f"Violin plot failed: {e_violin}. Falling back to dot plot.")
+                        shap.summary_plot(shap_values, X_plot, feature_names=feature_names, plot_type="dot", show=False, color_bar=True)
                     st.pyplot(fig)
                 else:
                     st.warning(f"Could not display SHAP plot: SHAP values shape {shap_values.shape} does not match feature count {X_test.shape[1]}")
