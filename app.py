@@ -152,6 +152,24 @@ if data is not None:
             else:
                 st.write("Feature importance not available for this model.")
 
+            # SHAP values plot
+            st.subheader("SHAP Values Plot")
+            try:
+                import shap
+                explainer = None
+                # Use TreeExplainer for tree-based models, otherwise KernelExplainer
+                if hasattr(best_model, 'feature_importances_'):
+                    explainer = shap.TreeExplainer(best_model)
+                else:
+                    explainer = shap.Explainer(best_model, X_train)
+                shap_values = explainer.shap_values(X_test)
+                # Beeswarm plot (default summary_plot)
+                shap.summary_plot(shap_values, X_test, plot_type="violin", show=False)
+                import matplotlib.pyplot as plt
+                st.pyplot(plt.gcf(), clear_figure=True)
+            except Exception as e:
+                st.warning(f"Could not display SHAP plot: {e}")
+
             if modeling_option == "AutoML (FLAML)":
                 st.subheader("Best Model Found")
                 st.write(type(best_model).__name__)
