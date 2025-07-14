@@ -152,21 +152,35 @@ if data is not None:
             else:
                 st.write("Feature importance not available for this model.")
 
-            # SHAP values plot
-            st.subheader("SHAP Values Plot")
+            # SHAP values plot (matplotlib beeswarm/violin)
+            st.subheader("SHAP Values Plot (Beeswarm/Violin, Matplotlib)")
             try:
                 import shap
+                # Try TreeExplainer for supported models
                 explainer = None
-                # Use TreeExplainer for tree-based models, otherwise KernelExplainer
-                if hasattr(best_model, 'feature_importances_'):
+                shap_values = None
+                import numpy as np
+                try:
                     explainer = shap.TreeExplainer(best_model)
+                    shap_values = explainer.shap_values(X_test)
+                except Exception:
+                    st.info("TreeExplainer not supported for this model. Using KernelExplainer on a sample (may be slow).")
+                    sample_X = X_test.sample(n=min(100, len(X_test)), random_state=42)
+                    explainer = shap.KernelExplainer(lambda data: best_model.predict(np.array(data)), np.array(sample_X))
+                    shap_values = explainer.shap_values(np.array(sample_X))
+                    X_test = sample_X
+                # Defensive: ensure shape matches and avoid feature_names_in_ issues
+                if isinstance(shap_values, list):
+                    shap_values = np.array(shap_values)
+                    if shap_values.ndim == 3:
+                        shap_values = shap_values[0]
+                if shap_values.shape[1] == X_test.shape[1]:
+                    # Matplotlib beeswarm/violin plot
+                    fig, ax = plt.subplots(figsize=(8, min(0.5 * X_test.shape[1], 12)))
+                    shap.summary_plot(shap_values, X_test, plot_type="violin", show=False, color_bar=True)
+                    st.pyplot(fig)
                 else:
-                    explainer = shap.Explainer(best_model, X_train)
-                shap_values = explainer.shap_values(X_test)
-                # Beeswarm plot (default summary_plot)
-                shap.summary_plot(shap_values, X_test, plot_type="violin", show=False)
-                import matplotlib.pyplot as plt
-                st.pyplot(plt.gcf(), clear_figure=True)
+                    st.warning(f"Could not display SHAP plot: SHAP values shape {shap_values.shape} does not match feature count {X_test.shape[1]}")
             except Exception as e:
                 st.warning(f"Could not display SHAP plot: {e}")
 
